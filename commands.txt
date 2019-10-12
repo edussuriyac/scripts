@@ -1,0 +1,142 @@
+
+docker kill $(docker ps -q)
+docker rm $(docker ps -qa)
+docker system prune -a 
+docker volumes prune -a 
+
+chmod +x cryptogen
+chmod +x configtxgen
+
+export SYS_CHANNEL=byfn-sys-channel
+export COMPOSE_PROJECT_NAME=nck
+export CHANNEL_NAME=nckchannel
+
+ ./cryptogen generate --config=./crypto-config.yaml
+ 
+ mkdir channel-artifacts
+
+./configtxgen -profile TwoOrgsOrdererGenesis -channelID $SYS_CHANNEL -outputBlock ./channel-artifacts/genesis.block
+
+./configtxgen -profile TwoOrgsChannel -outputCreateChannelTx ./channel-artifacts/channel.tx -channelID $CHANNEL_NAME
+
+./configtxgen -profile TwoOrgsChannel -outputAnchorPeersUpdate ./channel-artifacts/WarehouseMSPanchors.tx -channelID nckchannel -asOrg WarehouseMSP
+
+./configtxgen -profile TwoOrgsChannel -outputAnchorPeersUpdate ./channel-artifacts/IssuerMSPanchors.tx -channelID nckchannel -asOrg IssuerMSP
+
+./configtxgen -profile TwoOrgsChannel -outputAnchorPeersUpdate ./channel-artifacts/SupplierMSPanchors.tx -channelID nckchannel -asOrg SupplierMSP
+ 
+docker
+
+export IMAGE_TAG=latest
+export SYS_CHANNEL=byfn-sys-channel
+export COMPOSE_PROJECT_NAME=nck
+export CHANNEL_NAME=nckchannel
+
+docker-compose -f docker-compose-cli.yaml up -d
+docker-compose -f docker-compose-cli.yaml -f docker-compose-couch.yaml up -d
+
+WAREHOUSE_MPSCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/users/Admin@warehouse.nck.com/msp
+WAREHOUSE_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/peers/peer0.warehouse.nck.com/tls/ca.crt
+
+SUPPLIER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/users/Admin@supplier.nck.com/msp 
+SUPPLIER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/peers/peer0.supplier.nck.com/tls/ca.crt
+
+ISSUER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/users/Admin@issuer.nck.com/msp 
+ISSUER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/peers/peer0.issuer.nck.com/tls/ca.crt
+
+docker exec -it cli bash
+
+export CHANNEL_NAME=nckchannel
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/users/Admin@warehouse.nck.com/msp
+CORE_PEER_ADDRESS=peer0.warehouse.nck.com:7051
+CORE_PEER_LOCALMSPID="WarehouseMSP"
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/peers/peer0.warehouse.nck.com/tls/ca.crt
+
+peer channel create -o orderer.nck.com:7050 -c $CHANNEL_NAME -f ./channel-artifacts/channel.tx --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem
+
+peer channel join -b nckchannel.block
+
+echo "Installing smart contract on peer0.warehouse.nck.com"
+docker exec \
+  -e CORE_PEER_LOCALMSPID=Org1MSP \
+  -e CORE_PEER_ADDRESS=peer0.org1.example.com:7051 \
+  -e CORE_PEER_MSPCONFIGPATH=${ORG1_MSPCONFIGPATH} \
+  -e CORE_PEER_TLS_ROOTCERT_FILE=${ORG1_TLS_ROOTCERT_FILE} \
+  cli \
+  peer chaincode install \
+    -n fabcar \
+    -v 1.0 \
+    -p "$CC_SRC_PATH" \
+    -l "$CC_RUNTIME_LANGUAGE"
+
+//join org 2
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/users/Admin@supplier.nck.com/msp 
+CORE_PEER_ADDRESS=peer0.supplier.nck.com:9051 
+CORE_PEER_LOCALMSPID="SupplierMSP" 
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/peers/peer0.supplier.nck.com/tls/ca.crt 
+peer channel join -b nckchannel.block
+
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/users/Admin@issuer.nck.com/msp 
+CORE_PEER_ADDRESS=peer0.issuer.nck.com:10151 
+CORE_PEER_LOCALMSPID="IssuerMSP" 
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/peers/peer0.issuer.nck.com/tls/ca.crt 
+peer channel join -b nckchannel.block
+
+//anchor
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/users/Admin@warehouse.nck.com/msp
+CORE_PEER_ADDRESS=peer0.warehouse.nck.com:7051
+CORE_PEER_LOCALMSPID="WarehouseMSP"
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/peers/peer0.warehouse.nck.com/tls/ca.crt
+
+peer channel update -o orderer.nck.com:7050 -c $CHANNEL_NAME -f ./channel-artifacts/WarehouseMSPanchors.tx --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/users/Admin@supplier.nck.com/msp 
+CORE_PEER_ADDRESS=peer0.supplier.nck.com:9051 
+CORE_PEER_LOCALMSPID="SupplierMSP" 
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/peers/peer0.supplier.nck.com/tls/ca.crt 
+peer channel update -o orderer.nck.com:7050 -c $CHANNEL_NAME -f ./channel-artifacts/SupplierMSPanchors.tx --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem
+
+
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/users/Admin@issuer.nck.com/msp 
+CORE_PEER_ADDRESS=peer0.issuer.nck.com:10151 
+CORE_PEER_LOCALMSPID="IssuerMSP" 
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/peers/peer0.issuer.nck.com/tls/ca.crt 
+peer channel update -o orderer.nck.com:7050 -c $CHANNEL_NAME -f ./channel-artifacts/IssuerMSPanchors.tx --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem
+
+//chaincode
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/users/Admin@warehouse.nck.com/msp
+CORE_PEER_ADDRESS=peer0.warehouse.nck.com:7051
+CORE_PEER_LOCALMSPID="WarehouseMSP"
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/warehouse.nck.com/peers/peer0.warehouse.nck.com/tls/ca.crt
+
+peer chaincode install -n nckcc -v 1.0 -l node -p /opt/gopath/src/github.com/contract
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/users/Admin@supplier.nck.com/msp 
+CORE_PEER_ADDRESS=peer0.supplier.nck.com:9051 
+CORE_PEER_LOCALMSPID="SupplierMSP" 
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/supplier.nck.com/peers/peer0.supplier.nck.com/tls/ca.crt 
+
+peer chaincode install -n nckcc -v 1.0 -l node -p /opt/gopath/src/github.com/contract
+
+CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/users/Admin@issuer.nck.com/msp 
+CORE_PEER_ADDRESS=peer0.issuer.nck.com:10151 
+CORE_PEER_LOCALMSPID="IssuerMSP" 
+CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/issuer.nck.com/peers/peer0.issuer.nck.com/tls/ca.crt 
+
+peer chaincode install -n nckcc -v 1.0 -l node -p /opt/gopath/src/github.com/contract
+
+// chaincode commands
+
+peer chaincode instantiate -o orderer.nck.com:7050 --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem -C $CHANNEL_NAME -n nckcc -l node -v 1.0 -c '{"Args":["init"]}' -P "OR ('WarehouseMSP.peer','IssuerMSP.peer')"
+
+peer chaincode invoke -o orderer.nck.com:7050 --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem -C $CHANNEL_NAME -n nckcc -c '{"Args":["initDrug","759438","penicillin","nckdrugs","54","05-12-2019","13-12-2025","15","17"]}'
+
+peer chaincode invoke -o orderer.nck.com:7050 --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem -C $CHANNEL_NAME -n nckcc -c '{"Args":["initDrug","54320","tylognfd","haid","60","25-12-2018","15-04-2025","17","19"]}'
+peer chaincode invoke -o orderer.nck.com:7050 --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem -C $CHANNEL_NAME -n nckcc -c '{"Args":["initDrug","549323","fendsonfg","nckdrugs","50","04-08-2019","12-03-2025","12","14"]}'
+peer chaincode invoke -o orderer.nck.com:7050 --tls --cafile /opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/ordererOrganizations/nck.com/orderers/orderer.nck.com/msp/tlscacerts/tlsca.nck.com-cert.pem -C $CHANNEL_NAME -n nckcc -c '{"Args":["transferBatch","759438","haid"]}'
+
